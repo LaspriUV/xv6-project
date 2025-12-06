@@ -9,7 +9,7 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
-
+// sapa materia de mrd
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);
