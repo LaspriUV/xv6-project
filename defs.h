@@ -112,6 +112,8 @@ struct cpu*     mycpu(void);
 struct proc*    myproc();
 void            pinit(void);
 void            procdump(void);
+int             getpriority(int);      // ** Nueva funcion
+int             setpriority(int, int); // ** Nueva funcion
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
 void            setproc(struct proc*);
