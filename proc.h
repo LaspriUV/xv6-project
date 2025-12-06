@@ -34,6 +34,18 @@ struct context {
 
 enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+// ================================================
+// PRIORITY SCHEDULING CONSTANTS
+// ================================================
+#define MIN_PRIORITY 0         // Highest priority (best)
+#define MAX_PRIORITY 31        // Lowest priority (worst)
+#define DEFAULT_PRIORITY 15    // Medium priority (default for new processes)
+#define AGING_THRESHOLD 100    // Ticks before aging kicks in
+#define QUANTUM_TICKS 5        // Max ticks per quantum before penalty
+#define BOOST_INTERVAL 1000    // Ticks before priority boost (optional)
+// ================================================
+
+
 // Per-process state
 struct proc {
   uint sz;                     // Size of process memory (bytes)
@@ -48,6 +60,11 @@ struct proc {
   int killed;                  // If non-zero, have been killed
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
+  int priority;		       // ** Curent priority (0=highest, 31=lowest)
+  int original_priority;       // ** Base priority (for again reset)
+  int cpu_ticks;               // ** Ticks spent is RUNNING state
+  int wait_ticks;              // ** Ticks spent is RUNNABLE state (waiting)
+  int last_scheduled;          // ** Last time process was scheduled
   char name[16];               // Process name (debugging)
 };
 
