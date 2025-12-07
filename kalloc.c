@@ -9,16 +9,6 @@
 #include "mmu.h"
 #include "spinlock.h"
 
-// --- COW additions ---
-static ushort refcnt[(PHYSTOP - KERNBASE) / PGSIZE];
-static struct spinlock ref_lock;
-
-// helper: convertir una dirección física a índice del arreglo
-static inline int pa2idx(uint pa) {
-  return (pa - KERNBASE) / PGSIZE;
-}
-// --- fin COW additions ---
-
 void freerange(void *vstart, void *vend);
 extern char end[]; // first address after kernel loaded from ELF file
                    // defined by the kernel linker script in kernel.ld
@@ -42,14 +32,9 @@ void
 kinit1(void *vstart, void *vend)
 {
   initlock(&kmem.lock, "kmem");
-  initlock(&ref_lock, "refcnt");   // <-- NUEVO
   kmem.use_lock = 0;
-
-  memset(refcnt, 0, sizeof(refcnt));  // <-- NUEVO
-
   freerange(vstart, vend);
 }
-
 
 void
 kinit2(void *vstart, void *vend)
@@ -79,21 +64,7 @@ kfree(char *v)
   if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
     panic("kfree");
 
-  uint pa = V2P(v);
-  int idx = pa2idx(pa);
-
-  // --- COW logic: decrement refcount ---
-  acquire(&ref_lock);
-  if(refcnt[idx] > 1){
-    refcnt[idx]--;          // todavía hay procesos usando esta página
-    release(&ref_lock);
-    return;                 // NO liberamos físicamente
-  }
-  // si es 0 o 1, liberamos de verdad
-  refcnt[idx] = 0;
-  release(&ref_lock);
-
-  // --- liberar físicamente ---
+  // Fill with junk to catch dangling refs.
   memset(v, 1, PGSIZE);
 
   if(kmem.use_lock)
@@ -120,49 +91,6 @@ kalloc(void)
     kmem.freelist = r->next;
   if(kmem.use_lock)
     release(&kmem.lock);
-
-  if(r){
-    uint pa = V2P(r);
-    int idx = pa2idx(pa);
-    acquire(&ref_lock);
-    refcnt[idx] = 1;   // <-- cada vez que se asigna, refcount = 1
-    release(&ref_lock);
-  }
-
   return (char*)r;
 }
 
-
-void
-page_ref_inc(uint pa)
-{
-  int idx = pa2idx(pa);
-  acquire(&ref_lock);
-  refcnt[idx]++;
-  release(&ref_lock);
-}
-
-// decrementa y devuelve el nuevo valor
-int
-page_ref_dec(uint pa)
-{
-  int idx = pa2idx(pa);
-  int v;
-  acquire(&ref_lock);
-  if(refcnt[idx] > 0)
-    refcnt[idx]--;
-  v = refcnt[idx];
-  release(&ref_lock);
-  return v;
-}
-
-int
-page_ref_get(uint pa)
-{
-  int idx = pa2idx(pa);
-  int v;
-  acquire(&ref_lock);
-  v = refcnt[idx];
-  release(&ref_lock);
-  return v;
-}

@@ -310,7 +310,7 @@ clearpteu(pde_t *pgdir, char *uva)
   *pte &= ~PTE_U;
 }
 
-// Given a parent process's page table, create a COW copy
+// Given a parent process's page table, create a copy
 // of it for a child.
 pde_t*
 copyuvm(pde_t *pgdir, uint sz)
@@ -318,41 +318,31 @@ copyuvm(pde_t *pgdir, uint sz)
   pde_t *d;
   pte_t *pte;
   uint pa, i, flags;
+  char *mem;
 
   if((d = setupkvm()) == 0)
     return 0;
-
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
       panic("copyuvm: pte should exist");
     if(!(*pte & PTE_P))
       panic("copyuvm: page not present");
-
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
-
-    //
-    // --- COW: 1) quitar permiso de escritura del padre ---
-    //
-    *pte = (*pte & ~PTE_W) | PTE_COW;
-
-    //
-    // --- COW: 2) mapear misma página física en el hijo, sin PTE_W y con PTE_COW ---
-    //
-    if(mappages(d, (void*)i, PGSIZE, pa, (flags & ~PTE_W) | PTE_COW) < 0){
-      freevm(d);
-      return 0;
+    if((mem = kalloc()) == 0)
+      goto bad;
+    memmove(mem, (char*)P2V(pa), PGSIZE);
+    if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0) {
+      kfree(mem);
+      goto bad;
     }
-
-    //
-    // --- COW: 3) incrementar contador de referencias de esta página física ---
-    //
-    page_ref_inc(pa);
   }
-
   return d;
-}
 
+bad:
+  freevm(d);
+  return 0;
+}
 
 //PAGEBREAK!
 // Map user virtual address to kernel address.
