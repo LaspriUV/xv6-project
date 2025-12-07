@@ -38,10 +38,10 @@ struct cpu*
 mycpu(void)
 {
   int apicid, i;
-  
+
   if(readeflags()&FL_IF)
     panic("mycpu called with interrupts enabled\n");
-  
+
   apicid = lapicid();
   // APIC IDs are not guaranteed to be contiguous. Maybe we should have
   // a reverse map, or reserve a register to store &cpus[i].
@@ -89,6 +89,13 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
 
+  // Initialize scheduling fields
+  p->priority = DEFAULT_PRIORITY;
+  p->original_priority = DEFAULT_PRIORITY;
+  p->cpu_ticks = 0;
+  p->wait_ticks = 0;
+  p->last_scheduled = 0;
+  
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -124,7 +131,7 @@ userinit(void)
   extern char _binary_initcode_start[], _binary_initcode_size[];
 
   p = allocproc();
-  
+
   initproc = p;
   if((p->pgdir = setupkvm()) == 0)
     panic("userinit: out of memory?");
@@ -209,10 +216,17 @@ fork(void)
   np->cwd = idup(curproc->cwd);
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
-
+  
   pid = np->pid;
 
   acquire(&ptable.lock);
+
+  // Inherit scheduling info from parent
+  np->priority = curproc->priority;
+  np->original_priority = curproc->original_priority;
+  np->cpu_ticks = 0;
+  np->wait_ticks = 0;
+  np->last_scheduled = 0;
 
   np->state = RUNNABLE;
 
@@ -275,7 +289,7 @@ wait(void)
   struct proc *p;
   int havekids, pid;
   struct proc *curproc = myproc();
-  
+
   acquire(&ptable.lock);
   for(;;){
     // Scan through table looking for exited children.
@@ -315,7 +329,7 @@ wait(void)
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
-//  - choose a process to run
+//  - choose a process to run with a priority check
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
@@ -325,33 +339,39 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  
+
   for(;;){
     // Enable interrupts on this processor.
     sti();
 
-    // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+
+    // Choose the RUNNABLE process with best (smallest) priority.
+    struct proc *best = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
+      if(!best || p->priority < best->priority)
+        best = p;
+    }
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
+    if(best){
+      // Switch to chosen process.
+      c->proc = best;
+      best->wait_ticks = 0;          // just selected, reset wait counter
+      best->last_scheduled = 0;      // optional: you can set to a tick counter
+      switchuvm(best);
+      best->state = RUNNING;
 
-      swtch(&(c->scheduler), p->context);
+      swtch(&(c->scheduler), best->context);
       switchkvm();
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
     }
-    release(&ptable.lock);
 
+    release(&ptable.lock);
   }
 }
 
@@ -418,7 +438,7 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  
+
   if(p == 0)
     panic("sleep");
 
