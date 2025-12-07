@@ -181,6 +181,13 @@ UPROGS=\
 	_usertests\
 	_wc\
 	_zombie\
+	_cpubench\
+	_iobench\
+	_forkbench\
+	_mixedbench\
+	_schedulerbench\
+	_quicktest\
+	_benchrunner\
 
 fs.img: mkfs README.md $(UPROGS)
 	./mkfs fs.img README.md $(UPROGS)
@@ -251,7 +258,12 @@ EXTRA=\
 	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c\
 	ln.c ls.c mkdir.c rm.c stressfs.c usertests.c wc.c zombie.c\
 	printf.c umalloc.c\
+<<<<<<< HEAD
 	README.md dot-bochsrc *.pl toc.* runoff runoff1 runoff.list\
+=======
+	cpubench.c iobench.c mixedbench.c forkbench.c schedulerbench.c quicktest.c benchrunner.c\
+	README dot-bochsrc *.pl toc.* runoff runoff1 runoff.list\
+>>>>>>> fa20d2c (Benchmarks added)
 	.gdbinit.tmpl gdbutil\
 
 dist:
