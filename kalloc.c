@@ -76,9 +76,9 @@ incref(uint pa)
     release(&kmem.lock);
 }
 
-// Get reference count for a physical page
+// Get reference count for a physical page (Auxiliar creada)
 int
-getref(uint pa) (Auxiliar creada)
+getref(uint pa) 
 {
   int idx, count;
   
@@ -140,7 +140,7 @@ kfree(char *v)
 // Allocate one 4096-byte page of physical memory.
 // Returns a pointer that the kernel can use.
 // Returns 0 if the memory cannot be allocated.
-char*
+void*
 kalloc(void)
 {
   struct run *r;
