@@ -14,15 +14,21 @@ extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
 
+// NOTE: ptable is defined in proc.c as:
+// struct { struct spinlock lock; struct proc proc[NPROC]; } ptable;
+// We need to refer to ptable.lock and ptable.proc here.
+extern struct {
+  struct spinlock lock;
+  struct proc proc[NPROC];
+} ptable;
+
 void
 tvinit(void)
 {
   int i;
-
   for(i = 0; i < 256; i++)
     SETGATE(idt[i], 0, SEG_KCODE<<3, vectors[i], 0);
   SETGATE(idt[T_SYSCALL], 1, SEG_KCODE<<3, vectors[T_SYSCALL], DPL_USER);
-
   initlock(&tickslock, "time");
 }
 
@@ -36,6 +42,9 @@ idtinit(void)
 void
 trap(struct trapframe *tf)
 {
+  // Flag to indicate whether we should yield after releasing locks.
+  int need_yield = 0;
+
   if(tf->trapno == T_SYSCALL){
     if(myproc()->killed)
       exit();
@@ -48,6 +57,7 @@ trap(struct trapframe *tf)
 
   switch(tf->trapno){
   case T_IRQ0 + IRQ_TIMER:
+    // tick counter for the system (only CPU 0 increments the global ticks)
     if(cpuid() == 0){
       acquire(&tickslock);
       ticks++;
@@ -55,7 +65,47 @@ trap(struct trapframe *tf)
       release(&tickslock);
     }
     lapiceoi();
+
+    // --- Begin scheduling-related per-tick updates ---
+    {
+      struct proc *p;
+
+      // Acquire process table lock to safely update per-process counters and priorities.
+      acquire(&ptable.lock);
+
+      // Aging: increment wait_ticks for RUNNABLE processes and apply aging when threshold reached.
+      for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+        if(p->state == RUNNABLE){
+          p->wait_ticks++;
+          if(p->wait_ticks >= AGING_THRESHOLD){
+            if(p->priority > MIN_PRIORITY){
+              p->priority--;      // improve priority (0 is best)
+            }
+            p->wait_ticks = 0;
+          }
+        }
+      }
+
+      // Quantum & penalization: update cpu_ticks of the currently running process.
+      // Use mycpu()->proc or myproc(); ensure the process is RUNNING.
+      if(myproc() && myproc()->state == RUNNING){
+        myproc()->cpu_ticks++;
+        if(myproc()->cpu_ticks >= QUANTUM_TICKS){
+          // Penalize: make priority worse (increase number), capped at MAX_PRIORITY
+          if(myproc()->priority < MAX_PRIORITY)
+            myproc()->priority++;
+          myproc()->cpu_ticks = 0;
+          // Mark that we should yield (preempt) after releasing the lock.
+          need_yield = 1;
+        }
+      }
+
+      release(&ptable.lock);
+    }
+    // --- End scheduling updates ---
+
     break;
+
   case T_IRQ0 + IRQ_IDE:
     ideintr();
     lapiceoi();
@@ -77,7 +127,6 @@ trap(struct trapframe *tf)
             cpuid(), tf->cs, tf->eip);
     lapiceoi();
     break;
-
   //PAGEBREAK: 13
   default:
     if(myproc() == 0 || (tf->cs&3) == 0){
@@ -95,16 +144,16 @@ trap(struct trapframe *tf)
   }
 
   // Force process exit if it has been killed and is in user space.
-  // (If it is still executing in the kernel, let it keep running
-  // until it gets to the regular system call return.)
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
     exit();
 
-  // Force process to give up CPU on clock tick.
-  // If interrupts were on while locks held, would need to check nlock.
-  if(myproc() && myproc()->state == RUNNING &&
-     tf->trapno == T_IRQ0+IRQ_TIMER)
+  // === NOTE ===
+  // We removed the old unconditional yield() on every timer tick here,
+  // because now preemption is decided in the timer handling above
+  // and we only call yield() when need_yield==1 (after releasing ptable.lock).
+  if(need_yield){
     yield();
+  }
 
   // Check if the process has been killed since we yielded
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
