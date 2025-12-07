@@ -130,14 +130,18 @@ trap(struct trapframe *tf)
   
   //PAGEBREAK: 13
   default:
-    // COW IMPLEMENTATION WHEN A PROCCESS TRIES TO WRITE IN A COW PAGE Handle page fault (T_PGFLT = 14)
+    // Handle page fault (T_PGFLT = 14)
     if(tf->trapno == T_PGFLT){
       uint va = rcr2();  // Get the faulting address from CR2
       
-      // Try to handle as COW fault
-      if(myproc() && cowhandler(va) == 0){
-        // Successfully handled COW fault, continue execution
-        break;
+      // Check if this is a write fault (error code bit 1)
+      // Error code bits: bit 0 = present, bit 1 = write, bit 2 = user
+      if(myproc() && (tf->err & 2)){  // Write fault
+        // Try to handle as COW fault
+        if(cowhandler(va) == 0){
+          // Successfully handled COW fault, continue execution
+          break;
+        }
       }
       // If not a COW fault or handler failed, fall through to kill process
     }
@@ -156,10 +160,6 @@ trap(struct trapframe *tf)
     myproc()->killed = 1;
   }
 
-  // Force process exit if it has been killed and is in user space.
-  if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
-    exit();
-
   // === NOTE ===
   // We removed the old unconditional yield() on every timer tick here,
   // because now preemption is decided in the timer handling above
@@ -169,6 +169,8 @@ trap(struct trapframe *tf)
   }
 
   // Check if the process has been killed since we yielded
-  if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
+  if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER){
+    cprintf("Process %d (%s) being killed\n", myproc()->pid, myproc()->name);
     exit();
+  }
 }

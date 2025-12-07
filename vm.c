@@ -310,7 +310,7 @@ clearpteu(pde_t *pgdir, char *uva)
   *pte &= ~PTE_U;
 }
 
-// Given a parent process's page table, create a copy (Modificada para que ahora use COW)
+// Given a parent process's page table, create a copy
 // of it for a child using Copy-On-Write.
 pde_t*
 copyuvm(pde_t *pgdir, uint sz)
@@ -331,20 +331,25 @@ copyuvm(pde_t *pgdir, uint sz)
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
     
-    // Set up COW: mark both parent and child pages as COW and read-only
-    // Remove write permission and add COW flag
-    flags = (flags & ~PTE_W) | PTE_COW;
+    // Only apply COW to writable pages
+    // Read-only pages (like code/text) can be shared without COW
+    if(flags & PTE_W){
+      // Set up COW: mark both parent and child pages as COW and read-only
+      flags = (flags & ~PTE_W) | PTE_COW;
+      // Update parent's PTE to be COW
+      *pte = pa | flags;
+      
+      // Increment reference count ONLY for COW pages
+      incref(pa);
+    } else {
+      // Read-only pages: just increment refcount, no COW needed
+      incref(pa);
+    }
     
-    // Update parent's PTE to be COW
-    *pte = pa | flags;
-    
-    // Map same physical page in child with COW flag
+    // Map same physical page in child
     if(mappages(d, (void*)i, PGSIZE, pa, flags) < 0) {
       goto bad;
     }
-    
-    // Increment reference count for the shared page
-    incref(pa);
   }
   return d;
 
@@ -353,7 +358,7 @@ bad:
   return 0;
 }
 
-// Handle Copy-On-Write page fault (Añadida)
+// Handle Copy-On-Write page fault
 // Returns 0 on success, -1 on failure
 int
 cowhandler(uint va)
@@ -363,8 +368,15 @@ cowhandler(uint va)
   char *mem;
   struct proc *curproc = myproc();
   
+  if(!curproc)
+    return -1;
+  
   // Round down to page boundary
   va = PGROUNDDOWN(va);
+  
+  // Check if address is in valid range
+  if(va >= curproc->sz)
+    return -1;
   
   // Get the PTE for this virtual address
   pte = walkpgdir(curproc->pgdir, (void*)va, 0);
@@ -428,6 +440,7 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
   char *buf, *pa0;
   uint n, va0;
   pte_t *pte;
+  struct proc *curproc = myproc();
 
   buf = (char*)p;
   while(len > 0){
@@ -437,20 +450,24 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
     pte = walkpgdir(pgdir, (char*)va0, 0);
     if(pte && (*pte & PTE_P) && (*pte & PTE_COW)){
       // Need to handle COW before writing
-      // This is tricky because we're not in the context of the target process
-      // We need to allocate a new page if refcount > 1
       uint pa = PTE_ADDR(*pte);
       uint flags = PTE_FLAGS(*pte);
+      char *mem;
       
       if(getref(pa) > 1){
-        char *mem = kalloc();
+        mem = kalloc();
         if(mem == 0)
           return -1;
         memmove(mem, (char*)P2V(pa), PGSIZE);
-        *pte = V2P(mem) | (flags & ~PTE_COW) | PTE_W;
+        *pte = V2P(mem) | (flags & ~PTE_COW) | PTE_W | PTE_U;
         kfree(P2V(pa));
       } else {
-        *pte = pa | (flags & ~PTE_COW) | PTE_W;
+        *pte = pa | (flags & ~PTE_COW) | PTE_W | PTE_U;
+      }
+      
+      // Flush TLB for this specific page if it's the current process
+      if(curproc && curproc->pgdir == pgdir){
+        asm volatile("invlpg (%0)" : : "r" (va0));
       }
     }
     

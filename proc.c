@@ -203,6 +203,11 @@ fork(void)
     np->state = UNUSED;
     return -1;
   }
+  
+  // CRÍTICO: Flush TLB del padre porque copyuvm() modificó sus PTEs
+  // para marcarlas como COW (quitó PTE_W y agregó PTE_COW)
+  lcr3(V2P(curproc->pgdir));
+  
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
