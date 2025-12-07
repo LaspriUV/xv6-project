@@ -8,6 +8,13 @@
 #include "proc.h"
 #include "pstat.h"
 
+// ptable está definido en proc.c
+extern struct
+{
+  struct spinlock lock;
+  struct proc proc[NPROC];
+} ptable;
+
 int sys_getpstats(void)
 {
   struct pstat *ps;

@@ -1,3 +1,5 @@
+#include "pstat.h"
+
 struct buf;
 struct context;
 struct file;
