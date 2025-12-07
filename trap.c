@@ -14,6 +14,13 @@ extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
 
+// Necesitamos acceder a la tabla de procesos (ptable)
+extern struct {
+  struct spinlock lock;
+  struct proc proc[NPROC];
+} ptable;
+
+
 void
 tvinit(void)
 {
@@ -55,6 +62,31 @@ trap(struct trapframe *tf)
       release(&tickslock);
     }
     lapiceoi();
+   
+    // ---- Actualizar métricas por tick ----
+    {
+      struct proc *p;
+
+      acquire(&ptable.lock);
+
+      // Sumar tiempo de espera total a procesos RUNNABLE
+      for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+        if(p->state == RUNNABLE){
+          p->wait_ticks_tot++;
+          if(p->arrival_time == 0)
+            p->arrival_time = ticks;  // primera vez que está ready
+        }
+      }
+
+      // Sumar tiempo de ejecución al proceso RUNNING actual
+      if(myproc() && myproc()->state == RUNNING){
+        myproc()->run_ticks++;
+      }
+
+      release(&ptable.lock);
+    }
+    // ---- Fin actualización de métricas ----
+    
     break;
   case T_IRQ0 + IRQ_IDE:
     ideintr();

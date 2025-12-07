@@ -18,6 +18,12 @@ int nextpid = 1;
 extern void forkret(void);
 extern void trapret(void);
 
+// ticks global viene de trap.c
+extern uint ticks;
+
+// contador global de cambios de contexto
+int total_ctx_switches = 0;
+
 static void wakeup1(void *chan);
 
 void
@@ -88,6 +94,19 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  //inicialización de metricas para pruebas
+  p->arrival_time   = 0;
+  p->finish_time    = 0;
+  p->run_ticks      = 0;
+  p->wait_ticks_tot = 0;
+  p->ctx_switches   = 0;
+
+   // Inicializar métricas
+  p->arrival_time   = 0;
+  p->finish_time    = 0;
+  p->run_ticks      = 0;
+  p->wait_ticks_tot = 0;
+  p->ctx_switches   = 0;
 
   release(&ptable.lock);
 
@@ -260,6 +279,8 @@ exit(void)
         wakeup1(initproc);
     }
   }
+    // Registrar tiempo de finalización
+  curproc->finish_time = ticks;
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
@@ -340,6 +361,11 @@ scheduler(void)
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
       c->proc = p;
+      
+      // --- MÉTRICAS: cambios de contexto ---
+      p->ctx_switches++;
+      total_ctx_switches++;
+      // -------------------------------------
       switchuvm(p);
       p->state = RUNNING;
 

@@ -48,7 +48,15 @@ struct proc {
   int killed;                  // If non-zero, have been killed
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
-  char name[16];               // Process name (debugging)
+  
+  // Métricas de evaluación
+  uint arrival_time;      // tick en que el proceso se creó (o quedó RUNNABLE por 1ª vez)
+  uint finish_time;       // tick en que el proceso terminó (ZOMBIE)
+  uint run_ticks;         // ticks en estado RUNNING
+  uint wait_ticks_tot;    // ticks totales en estado RUNNABLE (para WT)
+  uint ctx_switches;      // cuántas veces fue seleccionado para ejecutar
+
+  char name[16]; // Process name (debugging)
 };
 
 // Process memory is laid out contiguously, low addresses first:
