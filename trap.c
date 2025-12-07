@@ -14,13 +14,6 @@ extern uint vectors[]; // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
 
-// Necesitamos acceder a la tabla de procesos (ptable)
-extern struct
-{
-  struct spinlock lock;
-  struct proc proc[NPROC];
-} ptable;
-
 // NOTE: ptable is defined in proc.c as:
 // struct { struct spinlock lock; struct proc proc[NPROC]; } ptable;
 // We need to refer to ptable.lock and ptable.proc here.
