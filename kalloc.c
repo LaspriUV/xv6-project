@@ -21,6 +21,10 @@ struct {
   struct spinlock lock;
   int use_lock;
   struct run *freelist;
+  
+  // Creamos nuestro array de referencias para paginas fisicas
+  // Index = physical page number (PA >> PGSHIFT)
+  int refcount[PHYSTOP / PGSIZE];
 } kmem;
 
 // Initialization happens in two phases.
@@ -51,6 +55,49 @@ freerange(void *vstart, void *vend)
   for(; p + PGSIZE <= (char*)vend; p += PGSIZE)
     kfree(p);
 }
+
+// Increment reference count for a physical page (Auxiliar creada)
+void
+incref(uint pa)
+{
+  int idx;
+  
+  if(pa < (uint)V2P(end) || pa >= PHYSTOP)
+    panic("incref");
+  
+  idx = pa / PGSIZE;
+  
+  if(kmem.use_lock)
+    acquire(&kmem.lock);
+  
+  kmem.refcount[idx]++;
+  
+  if(kmem.use_lock)
+    release(&kmem.lock);
+}
+
+// Get reference count for a physical page
+int
+getref(uint pa) (Auxiliar creada)
+{
+  int idx, count;
+  
+  if(pa < (uint)V2P(end) || pa >= PHYSTOP)
+    return 0;
+  
+  idx = pa / PGSIZE;
+  
+  if(kmem.use_lock)
+    acquire(&kmem.lock);
+  
+  count = kmem.refcount[idx];
+  
+  if(kmem.use_lock)
+    release(&kmem.lock);
+  
+  return count;
+}
+
 //PAGEBREAK: 21
 // Free the page of physical memory pointed at by v,
 // which normally should have been returned by a
@@ -60,18 +107,32 @@ void
 kfree(char *v)
 {
   struct run *r;
+  uint pa;
+  int idx;
 
   if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
     panic("kfree");
 
-  // Fill with junk to catch dangling refs.
-  memset(v, 1, PGSIZE);
-
+  pa = V2P(v);
+  idx = pa / PGSIZE;
+  
   if(kmem.use_lock)
     acquire(&kmem.lock);
-  r = (struct run*)v;
-  r->next = kmem.freelist;
-  kmem.freelist = r;
+  
+  // Decrement reference count
+  if(kmem.refcount[idx] > 0)
+    kmem.refcount[idx]--;
+  
+  // Only free if no more references
+  if(kmem.refcount[idx] == 0){
+    // Fill with junk to catch dangling refs.
+    memset(v, 1, PGSIZE);
+    
+    r = (struct run*)v;
+    r->next = kmem.freelist;
+    kmem.freelist = r;
+  }
+  
   if(kmem.use_lock)
     release(&kmem.lock);
 }
@@ -83,14 +144,24 @@ char*
 kalloc(void)
 {
   struct run *r;
+  uint pa;
+  int idx;
 
   if(kmem.use_lock)
     acquire(&kmem.lock);
+  
   r = kmem.freelist;
-  if(r)
+  if(r){
     kmem.freelist = r->next;
+    
+    // Initialize reference count to 1
+    pa = V2P((char*)r);
+    idx = pa / PGSIZE;
+    kmem.refcount[idx] = 1;
+  }
+  
   if(kmem.use_lock)
     release(&kmem.lock);
+  
   return (char*)r;
 }
-

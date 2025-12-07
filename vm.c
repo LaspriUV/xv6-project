@@ -310,37 +310,97 @@ clearpteu(pde_t *pgdir, char *uva)
   *pte &= ~PTE_U;
 }
 
-// Given a parent process's page table, create a copy
-// of it for a child.
+// Given a parent process's page table, create a copy (Modificada para que ahora use COW)
+// of it for a child using Copy-On-Write.
 pde_t*
 copyuvm(pde_t *pgdir, uint sz)
 {
   pde_t *d;
   pte_t *pte;
   uint pa, i, flags;
-  char *mem;
 
   if((d = setupkvm()) == 0)
     return 0;
+  
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
       panic("copyuvm: pte should exist");
     if(!(*pte & PTE_P))
       panic("copyuvm: page not present");
+    
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto bad;
-    memmove(mem, (char*)P2V(pa), PGSIZE);
-    if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0) {
-      kfree(mem);
+    
+    // Set up COW: mark both parent and child pages as COW and read-only
+    // Remove write permission and add COW flag
+    flags = (flags & ~PTE_W) | PTE_COW;
+    
+    // Update parent's PTE to be COW
+    *pte = pa | flags;
+    
+    // Map same physical page in child with COW flag
+    if(mappages(d, (void*)i, PGSIZE, pa, flags) < 0) {
       goto bad;
     }
+    
+    // Increment reference count for the shared page
+    incref(pa);
   }
   return d;
 
 bad:
   freevm(d);
+  return 0;
+}
+
+// Handle Copy-On-Write page fault (Añadida)
+// Returns 0 on success, -1 on failure
+int
+cowhandler(uint va)
+{
+  pte_t *pte;
+  uint pa, flags;
+  char *mem;
+  struct proc *curproc = myproc();
+  
+  // Round down to page boundary
+  va = PGROUNDDOWN(va);
+  
+  // Get the PTE for this virtual address
+  pte = walkpgdir(curproc->pgdir, (void*)va, 0);
+  if(!pte)
+    return -1;
+  if(!(*pte & PTE_P))
+    return -1;
+  if(!(*pte & PTE_COW))
+    return -1;  // Not a COW page
+  
+  pa = PTE_ADDR(*pte);
+  flags = PTE_FLAGS(*pte);
+  
+  // Check reference count
+  if(getref(pa) == 1){
+    // Only one reference, just restore write permission
+    *pte = pa | (flags & ~PTE_COW) | PTE_W;
+  } else {
+    // Multiple references, need to copy
+    mem = kalloc();
+    if(mem == 0)
+      return -1;
+    
+    // Copy the page content
+    memmove(mem, (char*)P2V(pa), PGSIZE);
+    
+    // Update PTE to point to new page with write permission
+    *pte = V2P(mem) | (flags & ~PTE_COW) | PTE_W;
+    
+    // Decrement reference count of old page
+    kfree(P2V(pa));
+  }
+  
+  // Flush TLB for this address
+  lcr3(V2P(curproc->pgdir));
+  
   return 0;
 }
 
@@ -367,10 +427,33 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
 {
   char *buf, *pa0;
   uint n, va0;
+  pte_t *pte;
 
   buf = (char*)p;
   while(len > 0){
     va0 = (uint)PGROUNDDOWN(va);
+    
+    // Check if this is a COW page and handle it
+    pte = walkpgdir(pgdir, (char*)va0, 0);
+    if(pte && (*pte & PTE_P) && (*pte & PTE_COW)){
+      // Need to handle COW before writing
+      // This is tricky because we're not in the context of the target process
+      // We need to allocate a new page if refcount > 1
+      uint pa = PTE_ADDR(*pte);
+      uint flags = PTE_FLAGS(*pte);
+      
+      if(getref(pa) > 1){
+        char *mem = kalloc();
+        if(mem == 0)
+          return -1;
+        memmove(mem, (char*)P2V(pa), PGSIZE);
+        *pte = V2P(mem) | (flags & ~PTE_COW) | PTE_W;
+        kfree(P2V(pa));
+      } else {
+        *pte = pa | (flags & ~PTE_COW) | PTE_W;
+      }
+    }
+    
     pa0 = uva2ka(pgdir, (char*)va0);
     if(pa0 == 0)
       return -1;
@@ -391,4 +474,3 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
 // Blank page.
 //PAGEBREAK!
 // Blank page.
-

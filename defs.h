@@ -64,10 +64,12 @@ extern uchar    ioapicid;
 void            ioapicinit(void);
 
 // kalloc.c
-char*           kalloc(void);
+void*           kalloc(void);
 void            kfree(char*);
 void            kinit1(void*, void*);
 void            kinit2(void*, void*);
+void            incref(uint);      // Nueva: incrementar refcount
+int             getref(uint);      // Nueva: obtener refcount
 
 // kbd.c
 void            kbdintr(void);
@@ -185,6 +187,7 @@ void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
+int             cowhandler(uint);  // Nueva: manejar COW page fault
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))

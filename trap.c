@@ -127,8 +127,21 @@ trap(struct trapframe *tf)
             cpuid(), tf->cs, tf->eip);
     lapiceoi();
     break;
+  
   //PAGEBREAK: 13
   default:
+    // COW IMPLEMENTATION WHEN A PROCCESS TRIES TO WRITE IN A COW PAGE Handle page fault (T_PGFLT = 14)
+    if(tf->trapno == T_PGFLT){
+      uint va = rcr2();  // Get the faulting address from CR2
+      
+      // Try to handle as COW fault
+      if(myproc() && cowhandler(va) == 0){
+        // Successfully handled COW fault, continue execution
+        break;
+      }
+      // If not a COW fault or handler failed, fall through to kill process
+    }
+    
     if(myproc() == 0 || (tf->cs&3) == 0){
       // In kernel, it must be our mistake.
       cprintf("unexpected trap %d from cpu %d eip %x (cr2=0x%x)\n",
