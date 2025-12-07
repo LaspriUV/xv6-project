@@ -68,6 +68,11 @@ char*           kalloc(void);
 void            kfree(char*);
 void            kinit1(void*, void*);
 void            kinit2(void*, void*);
+// prototipos para refcount (kalloc.c)
+void page_ref_inc(uint pa);
+int page_ref_dec(uint pa);
+int page_ref_get(uint pa);
+// end kalloc.c prototipos
 
 // kbd.c
 void            kbdintr(void);
